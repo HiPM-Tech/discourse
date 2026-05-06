@@ -3901,10 +3901,6 @@ uncategorized:
     default: false
     area: "users"
 
-  splash_screen:
-    default: true
-    area: "interface"
-
   splash_screen_image:
     default: ""
     type: upload
