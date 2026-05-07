@@ -2908,6 +2908,47 @@ RSpec.describe TopicsController do
       expect(response.parsed_body).not_to have_key("tags_descriptions")
     end
 
+    it "does not expose links from hidden posts in topic details to non-staff viewers" do
+      test_topic = Fabricate(:topic, user: post_author1)
+      visible_post = Fabricate(:post, topic: test_topic, user: post_author1)
+      hidden_post = Fabricate(:post, topic: test_topic, user: post_author1)
+
+      Fabricate(
+        :topic_link,
+        post: visible_post,
+        url: "https://visible-link.example.com",
+        domain: "visible-link.example.com",
+        clicks: 1,
+        title: "Visible title",
+      )
+      Fabricate(
+        :topic_link,
+        post: hidden_post,
+        url: "https://hidden-link.example.com",
+        domain: "hidden-link.example.com",
+        clicks: 1,
+        title: "Hidden title",
+      )
+
+      hidden_post.hide!(PostActionType.types[:off_topic])
+
+      get "/t/#{test_topic.slug}/#{test_topic.id}.json"
+
+      expect(response.status).to eq(200)
+      expect(response.parsed_body["details"]["links"]).to contain_exactly(
+        a_hash_including("url" => "https://visible-link.example.com", "title" => "Visible title"),
+      )
+
+      sign_in(moderator)
+      get "/t/#{test_topic.slug}/#{test_topic.id}.json"
+
+      expect(response.status).to eq(200)
+      expect(response.parsed_body["details"]["links"]).to contain_exactly(
+        a_hash_including("url" => "https://visible-link.example.com", "title" => "Visible title"),
+        a_hash_including("url" => "https://hidden-link.example.com", "title" => "Hidden title"),
+      )
+    end
+
     it "shows a blank-slug topic without redirecting" do
       topic.update_columns(title: "", slug: nil)
       topic.reload
