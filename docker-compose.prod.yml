@@ -29,7 +29,6 @@ services:
   app:
     # 生产环境使用预构建镜像而非本地构建
     image: ${DISCOURSE_IMAGE:-ghcr.io/hipm-tech/discourse:latest}
-    build: null
     container_name: discourse-app
     environment:
       RAILS_ENV: production
@@ -68,7 +67,6 @@ services:
 
   sidekiq:
     image: ${DISCOURSE_IMAGE:-ghcr.io/hipm-tech/discourse:latest}
-    build: null
     container_name: discourse-sidekiq
     environment:
       RAILS_ENV: production
