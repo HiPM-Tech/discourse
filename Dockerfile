@@ -74,8 +74,12 @@ FROM base AS node-dependencies
 # 复制项目文件（pnpm workspace 需要完整项目结构）
 COPY . .
 
-# 安装 Node.js 包
-RUN pnpm install --frozen-lockfile || pnpm install
+# 配置 pnpm 并使用 npm 安装依赖
+# 注意：Discourse 项目使用 pnpm workspace，但我们可以用 npm 安装
+RUN npm install -g pnpm && \
+    pnpm config set strict-peer-dependencies false && \
+    pnpm install --no-frozen-lockfile || \
+    (echo "pnpm install failed, trying npm..." && npm install)
 
 # =============================================================================
 # 构建阶段 - 编译前端资源
