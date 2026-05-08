@@ -88,7 +88,6 @@ FROM base AS build
 
 # 复制 Ruby 依赖
 COPY --from=ruby-dependencies ${BUNDLE_PATH} ${BUNDLE_PATH}
-COPY --from=ruby-dependencies ${DISCOURSE_HOME}/.bundle ${DISCOURSE_HOME}/.bundle
 
 # 复制 Node 依赖
 COPY --from=node-dependencies ${DISCOURSE_HOME}/node_modules ${DISCOURSE_HOME}/node_modules
@@ -98,6 +97,10 @@ COPY --from=node-dependencies ${DISCOURSE_HOME}/themes ${DISCOURSE_HOME}/themes
 
 # 复制源代码
 COPY . .
+
+# 设置 bundle 配置
+RUN bundle config set --local deployment 'true' && \
+    bundle config set --local without 'development test'
 
 # 编译前端资源
 RUN bundle exec rake assets:precompile
@@ -122,7 +125,6 @@ RUN groupadd -r discourse && useradd -r -g discourse -d ${DISCOURSE_HOME} discou
 
 # 复制 Ruby 依赖
 COPY --from=ruby-dependencies ${BUNDLE_PATH} ${BUNDLE_PATH}
-COPY --from=ruby-dependencies ${DISCOURSE_HOME}/.bundle ${DISCOURSE_HOME}/.bundle
 
 # 复制 Node 依赖
 COPY --from=node-dependencies ${DISCOURSE_HOME}/node_modules ${DISCOURSE_HOME}/node_modules
