@@ -1,0 +1,140 @@
+# Discourse 生产环境 Docker Compose 配置
+# 使用方式: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+version: "3.8"
+
+services:
+  # 生产环境使用 Nginx 作为反向代理
+  nginx:
+    image: nginx:alpine
+    container_name: discourse-nginx
+    ports:
+      - "${DISCOURSE_HTTP_PORT:-80}:80"
+      - "${DISCOURSE_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./docker/nginx/nginx.prod.conf:/etc/nginx/nginx.conf:ro
+      - ./docker/nginx/ssl:/etc/nginx/ssl:ro
+      - discourse-uploads:/var/www/discourse/public/uploads:ro
+      - discourse-logs:/var/log/nginx
+    depends_on:
+      app:
+        condition: service_healthy
+    networks:
+      - discourse-network
+    restart: unless-stopped
+
+  app:
+    # 生产环境使用预构建镜像而非本地构建
+    image: ${DISCOURSE_IMAGE:-ghcr.io/hipm-tech/discourse:latest}
+    build: null
+    container_name: discourse-app
+    environment:
+      RAILS_ENV: production
+      UNICORN_WORKERS: ${UNICORN_WORKERS:-8}
+      UNICORN_SIDEKIQS: ${UNICORN_SIDEKIQS:-2}
+      DISCOURSE_ENABLE_CORS: "true"
+      DISCOURSE_SERVE_STATIC_ASSETS: "true"
+      # 生产环境强制使用安全密钥
+      DISCOURSE_SECRET_KEY_BASE: ${DISCOURSE_SECRET_KEY_BASE:?错误: 生产环境必须设置 DISCOURSE_SECRET_KEY_BASE}
+      DISCOURSE_DB_PASSWORD: ${DISCOURSE_DB_PASSWORD:?错误: 生产环境必须设置 DISCOURSE_DB_PASSWORD}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '1.0'
+          memory: 1G
+
+  sidekiq:
+    image: ${DISCOURSE_IMAGE:-discourse/discourse:latest}
+    build: null
+    container_name: discourse-sidekiq
+    environment:
+      RAILS_ENV: production
+      DISCOURSE_SECRET_KEY_BASE: ${DISCOURSE_SECRET_KEY_BASE}
+      DISCOURSE_DB_PASSWORD: ${DISCOURSE_DB_PASSWORD}
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+
+  postgres:
+    container_name: discourse-postgres
+    # 生产环境使用更强大的 Postgres 配置
+    command: >
+      postgres
+      -c shared_buffers=512MB
+      -c max_connections=400
+      -c work_mem=20MB
+      -c maintenance_work_mem=128MB
+      -c effective_cache_size=1GB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c default_statistics_target=100
+      -c random_page_cost=1.1
+      -c effective_io_concurrency=200
+      -c min_wal_size=1GB
+      -c max_wal_size=4GB
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+
+  redis:
+    container_name: discourse-redis
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --save 900 1
+      --save 300 10
+      --save 60 10000
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+  # 可选: 自动备份服务
+  backup:
+    image: ${DISCOURSE_IMAGE:-ghcr.io/hipm-tech/discourse:latest}
+    container_name: discourse-backup
+    command: >
+      sh -c "
+        while true; do
+          echo 'Starting backup...';
+          bundle exec rake db:backup;
+          # 保留最近7天的备份
+          find /var/www/discourse/public/backups -name '*.tar.gz' -mtime +7 -delete;
+          echo 'Backup completed. Sleeping for 24 hours...';
+          sleep 86400;
+        done
+      "
+    environment:
+      RAILS_ENV: production
+      DISCOURSE_SECRET_KEY_BASE: ${DISCOURSE_SECRET_KEY_BASE}
+      DISCOURSE_DB_PASSWORD: ${DISCOURSE_DB_PASSWORD}
+    volumes:
+      - discourse-backups:/var/www/discourse/public/backups
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - discourse-network
+    restart: unless-stopped
+    profiles:
+      - backup
+
+networks:
+  discourse-network:
+    driver: bridge

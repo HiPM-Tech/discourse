@@ -1,0 +1,188 @@
+# Discourse 测试环境 Docker Compose 配置
+# 使用方式: docker-compose -f docker-compose.yml -f docker-compose.test.yml up --abort-on-container-exit
+#
+# 测试环境特点:
+# - 独立的测试数据库
+# - 自动运行测试套件
+# - 生成测试报告
+# - 支持并行测试
+
+version: "3.8"
+
+services:
+  app:
+    container_name: discourse-app-test
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: test
+    environment:
+      RAILS_ENV: test
+      DISCOURSE_DB_HOST: postgres
+      DISCOURSE_DB_NAME: discourse_test
+      DISCOURSE_DB_USERNAME: discourse
+      DISCOURSE_DB_PASSWORD: discourse
+      DISCOURSE_REDIS_HOST: redis
+      # 测试配置
+      CI: "true"
+      SKIP_LINT: "${SKIP_LINT:-0}"
+      SKIP_TESTS: "${SKIP_TESTS:-0}"
+      SKIP_CORE: "${SKIP_CORE:-0}"
+      SKIP_PLUGINS: "${SKIP_PLUGINS:-0}"
+      RUBY_ONLY: "${RUBY_ONLY:-0}"
+      JS_ONLY: "${JS_ONLY:-0}"
+      RUN_SYSTEM_TESTS: "${RUN_SYSTEM_TESTS:-0}"
+      USE_TURBO: "${USE_TURBO:-0}"
+      SINGLE_PLUGIN: "${SINGLE_PLUGIN:-}"
+      BISECT: "${BISECT:-0}"
+      RSPEC_SEED: "${RSPEC_SEED:-}"
+      CREATE_PARALLEL_DATABASES: "${CREATE_PARALLEL_DATABASES:-0}"
+      INSTALL_OFFICIAL_PLUGINS: "${INSTALL_OFFICIAL_PLUGINS:-0}"
+      UPDATE_ALL_PLUGINS: "${UPDATE_ALL_PLUGINS:-0}"
+      SKIP_INSTALL_PLUGINS: "${SKIP_INSTALL_PLUGINS:-}"
+      # 测试报告
+      COVERAGE: "${COVERAGE:-0}"
+      SIMPLECOV_FORMAT: "${SIMPLECOV_FORMAT:-html}"
+    volumes:
+      # 挂载代码用于测试
+      - .:/var/www/discourse
+      - discourse-node_modules:/var/www/discourse/node_modules
+      - discourse-bundle:/var/www/discourse/vendor/bundle
+      # 测试报告输出
+      - ./test-results:/var/www/discourse/test-results
+      - ./coverage:/var/www/discourse/coverage
+    command: >
+      sh -c "
+        echo 'Setting up test environment...' &&
+        bundle check || bundle install &&
+        pnpm install &&
+        pnpm playwright-install &&
+        echo 'Running tests...' &&
+        bundle exec rake docker:test
+      "
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  postgres:
+    container_name: discourse-postgres-test
+    environment:
+      POSTGRES_USER: discourse
+      POSTGRES_PASSWORD: discourse
+      POSTGRES_DB: discourse_test
+    # 测试环境使用临时存储，不持久化
+    tmpfs:
+      - /var/lib/postgresql/data
+    command: >
+      postgres
+      -c shared_buffers=256MB
+      -c max_connections=200
+      -c fsync=off
+      -c synchronous_commit=off
+      -c full_page_writes=off
+
+  redis:
+    container_name: discourse-redis-test
+    # 测试环境使用临时存储
+    tmpfs:
+      - /data
+    command: >
+      redis-server
+      --appendonly no
+      --save ""
+      --maxmemory 256mb
+
+  # 可选: 仅运行 Lint 检查
+  lint:
+    container_name: discourse-lint
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: test
+    environment:
+      RAILS_ENV: test
+    volumes:
+      - .:/var/www/discourse
+      - discourse-node_modules:/var/www/discourse/node_modules
+      - discourse-bundle:/var/www/discourse/vendor/bundle
+    command: >
+      sh -c "
+        bundle check || bundle install &&
+        pnpm install &&
+        echo 'Running linters...' &&
+        bundle exec rubocop &&
+        pnpm eslint frontend &&
+        pnpm pprettier --check 'app/assets/stylesheets/**/*.scss' 'frontend/**/*.js'
+      "
+    profiles:
+      - lint
+
+  # 可选: 仅运行 RSpec 测试
+  rspec:
+    container_name: discourse-rspec
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: test
+    environment:
+      RAILS_ENV: test
+      DISCOURSE_DB_HOST: postgres
+      DISCOURSE_DB_NAME: discourse_test
+      DISCOURSE_DB_USERNAME: discourse
+      DISCOURSE_DB_PASSWORD: discourse
+      DISCOURSE_REDIS_HOST: redis
+      CI: "true"
+      USE_TURBO: "${USE_TURBO:-0}"
+      SINGLE_PLUGIN: "${SINGLE_PLUGIN:-}"
+    volumes:
+      - .:/var/www/discourse
+      - discourse-node_modules:/var/www/discourse/node_modules
+      - discourse-bundle:/var/www/discourse/vendor/bundle
+      - ./test-results:/var/www/discourse/test-results
+    command: >
+      sh -c "
+        bundle check || bundle install &&
+        bundle exec rake db:create db:migrate &&
+        if [ '${USE_TURBO}' = '1' ]; then
+          bundle exec ./bin/turbo_rspec;
+        else
+          bundle exec rspec;
+        fi
+      "
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    profiles:
+      - rspec
+
+  # 可选: 仅运行 QUnit 测试
+  qunit:
+    container_name: discourse-qunit
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: test
+    environment:
+      RAILS_ENV: test
+      CI: "true"
+      QUNIT_PARALLEL: "${QUNIT_PARALLEL:-4}"
+    volumes:
+      - .:/var/www/discourse
+      - discourse-node_modules:/var/www/discourse/node_modules
+    command: >
+      sh -c "
+        pnpm install &&
+        CI=1 QUNIT_PARALLEL=${QUNIT_PARALLEL:-4} bin/qunit --standalone
+      "
+    profiles:
+      - qunit
+
+volumes:
+  discourse-node_modules:
+    driver: local
+  discourse-bundle:
+    driver: local

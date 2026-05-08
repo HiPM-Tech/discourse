@@ -1,0 +1,132 @@
+# Discourse 统一 Docker Compose 配置
+# 基础配置，可被其他环境文件覆盖
+
+version: "3.8"
+
+x-discourse-base: &discourse-base
+  build:
+    context: .
+    dockerfile: Dockerfile
+  environment: &discourse-env
+    # 数据库配置
+    DISCOURSE_DB_HOST: postgres
+    DISCOURSE_DB_PORT: 5432
+    DISCOURSE_DB_NAME: discourse
+    DISCOURSE_DB_USERNAME: discourse
+    DISCOURSE_DB_PASSWORD: ${DISCOURSE_DB_PASSWORD:-discourse_password}
+    DISCOURSE_REDIS_HOST: redis
+    DISCOURSE_REDIS_PORT: 6379
+    DISCOURSE_REDIS_PASSWORD: ${DISCOURSE_REDIS_PASSWORD:-}
+    # 应用配置
+    DISCOURSE_HOSTNAME: ${DISCOURSE_HOSTNAME:-localhost}
+    DISCOURSE_DEVELOPER_EMAILS: ${DISCOURSE_DEVELOPER_EMAILS:-}
+    DISCOURSE_SMTP_ADDRESS: ${DISCOURSE_SMTP_ADDRESS:-}
+    DISCOURSE_SMTP_PORT: ${DISCOURSE_SMTP_PORT:-587}
+    DISCOURSE_SMTP_USER_NAME: ${DISCOURSE_SMTP_USER_NAME:-}
+    DISCOURSE_SMTP_PASSWORD: ${DISCOURSE_SMTP_PASSWORD:-}
+    DISCOURSE_SMTP_ENABLE_START_TLS: ${DISCOURSE_SMTP_ENABLE_START_TLS:-true}
+    # 安全密钥 (生产环境必须修改)
+    DISCOURSE_SECRET_KEY_BASE: ${DISCOURSE_SECRET_KEY_BASE:-change_me_in_production}
+    # 其他配置
+    RAILS_ENV: ${RAILS_ENV:-production}
+    UNICORN_WORKERS: ${UNICORN_WORKERS:-4}
+    UNICORN_SIDEKIQS: ${UNICORN_SIDEKIQS:-1}
+    DISCOURSE_MAXMIND_LICENSE_KEY: ${DISCOURSE_MAXMIND_LICENSE_KEY:-}
+  volumes:
+    - discourse-uploads:/var/www/discourse/public/uploads
+    - discourse-backups:/var/www/discourse/public/backups
+    - discourse-logs:/var/www/discourse/log
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  networks:
+    - discourse-network
+  restart: unless-stopped
+
+services:
+  # PostgreSQL 数据库
+  postgres:
+    image: postgres:15-alpine
+    container_name: discourse-postgres
+    environment:
+      POSTGRES_USER: discourse
+      POSTGRES_PASSWORD: ${DISCOURSE_DB_PASSWORD:-discourse_password}
+      POSTGRES_DB: discourse
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - discourse-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U discourse -d discourse"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    command: >
+      postgres
+      -c shared_buffers=256MB
+      -c max_connections=200
+      -c work_mem=10MB
+      -c maintenance_work_mem=64MB
+      -c effective_cache_size=512MB
+
+  # Redis 缓存
+  redis:
+    image: redis:7-alpine
+    container_name: discourse-redis
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    networks:
+      - discourse-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Discourse 主应用
+  app:
+    <<: *discourse-base
+    container_name: discourse-app
+    ports:
+      - "${DISCOURSE_HTTP_PORT:-80}:80"
+    environment:
+      <<: *discourse-env
+      RAILS_ENV: ${RAILS_ENV:-production}
+
+  # Sidekiq 后台任务
+  sidekiq:
+    <<: *discourse-base
+    container_name: discourse-sidekiq
+    command: bundle exec sidekiq -c 10 -q critical -q low -q default
+    environment:
+      <<: *discourse-env
+      RAILS_ENV: ${RAILS_ENV:-production}
+    ports: []
+    depends_on:
+      - app
+
+volumes:
+  postgres-data:
+    driver: local
+  redis-data:
+    driver: local
+  discourse-uploads:
+    driver: local
+  discourse-backups:
+    driver: local
+  discourse-logs:
+    driver: local
+
+networks:
+  discourse-network:
+    driver: bridge

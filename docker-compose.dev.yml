@@ -1,0 +1,159 @@
+# Discourse 开发环境 Docker Compose 配置
+# 使用方式: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#
+# 开发环境特点:
+# - 代码挂载 (bind mount) 支持热重载
+# - 包含 MailHog 用于邮件测试
+# - 包含 Chrome 用于系统测试
+# - 端口映射方便本地调试
+
+version: "3.8"
+
+services:
+  app:
+    container_name: discourse-app-dev
+    # 开发环境使用本地 Dockerfile 构建
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    ports:
+      - "${DISCOURSE_HTTP_PORT:-3000}:3000"
+      - "${DISCOURSE_DEBUG_PORT:-9229}:9229"  # Node 调试端口
+    environment:
+      RAILS_ENV: development
+      DISCOURSE_DEV_DB: discourse_development
+      DISCOURSE_DB_NAME: discourse_development
+      DISCOURSE_DB_USERNAME: discourse
+      DISCOURSE_DB_PASSWORD: discourse
+      DISCOURSE_REDIS_HOST: redis
+      DISCOURSE_REDIS_PORT: 6379
+      # 开发环境配置
+      DISCOURSE_DEVELOPER_EMAILS: "${DISCOURSE_DEVELOPER_EMAILS:-dev@example.com}"
+      RAILS_DEVELOPMENT_HOSTS: "${DISCOURSE_HOSTNAME:-localhost},.app.github.dev"
+      # 禁用一些生产环境特性
+      DISCOURSE_SERVE_STATIC_ASSETS: "false"
+      # 开发工具
+      BYEBUG_PORT: 8989
+      RUBY_DEBUG_PORT: 8989
+    volumes:
+      # 代码挂载 - 支持热重载
+      - .:/var/www/discourse
+      # 使用命名卷存储依赖，避免覆盖容器内的 node_modules
+      - discourse-node_modules:/var/www/discourse/node_modules
+      - discourse-bundle:/var/www/discourse/vendor/bundle
+      # 数据持久化
+      - discourse-uploads:/var/www/discourse/public/uploads
+      - discourse-backups:/var/www/discourse/public/backups
+      - discourse-logs:/var/www/discourse/log
+      - discourse-tmp:/var/www/discourse/tmp
+    command: >
+      sh -c "
+        echo 'Installing dependencies...' &&
+        bundle check || bundle install &&
+        pnpm install &&
+        echo 'Setting up database...' &&
+        bundle exec rake db:create db:migrate 2>/dev/null || true &&
+        echo 'Starting Rails server...' &&
+        bundle exec rails server -b 0.0.0.0 -p 3000
+      "
+    stdin_open: true
+    tty: true
+
+  sidekiq:
+    container_name: discourse-sidekiq-dev
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    environment:
+      RAILS_ENV: development
+      DISCOURSE_DEV_DB: discourse_development
+      DISCOURSE_DB_NAME: discourse_development
+      DISCOURSE_DB_USERNAME: discourse
+      DISCOURSE_DB_PASSWORD: discourse
+      DISCOURSE_REDIS_HOST: redis
+    volumes:
+      - .:/var/www/discourse
+      - discourse-node_modules:/var/www/discourse/node_modules
+      - discourse-bundle:/var/www/discourse/vendor/bundle
+    command: bundle exec sidekiq -c 5 -q critical -q low -q default
+    depends_on:
+      - app
+
+  postgres:
+    container_name: discourse-postgres-dev
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"  # 暴露端口便于本地工具连接
+    environment:
+      POSTGRES_USER: discourse
+      POSTGRES_PASSWORD: discourse
+      POSTGRES_DB: discourse_development
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # 初始化脚本
+      - ./docker/postgres/init-dev.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+  redis:
+    container_name: discourse-redis-dev
+    ports:
+      - "${REDIS_PORT:-6379}:6379"  # 暴露端口便于本地工具连接
+
+  # 邮件测试服务
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: discourse-mailhog
+    ports:
+      - "${MAILHOG_SMTP_PORT:-1025}:1025"  # SMTP 端口
+      - "${MAILHOG_WEB_PORT:-8025}:8025"   # Web UI
+    networks:
+      - discourse-network
+    restart: unless-stopped
+
+  # Ember CLI 开发服务器 (可选，用于前端开发)
+  ember:
+    container_name: discourse-ember-dev
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    environment:
+      RAILS_ENV: development
+      DISCOURSE_DB_HOST: postgres
+      DISCOURSE_REDIS_HOST: redis
+    volumes:
+      - .:/var/www/discourse
+      - discourse-node_modules:/var/www/discourse/node_modules
+    ports:
+      - "${EMBER_PORT:-4200}:4200"
+    command: pnpm ember serve --proxy http://app:3000 --host 0.0.0.0
+    depends_on:
+      - app
+    profiles:
+      - ember
+
+  # Chrome 浏览器用于系统测试
+  chrome:
+    image: selenium/standalone-chrome:latest
+    container_name: discourse-chrome
+    ports:
+      - "${SELENIUM_PORT:-4444}:4444"
+      - "${CHROME_DEBUG_PORT:-9229}:9229"
+    environment:
+      - SE_OPTS=--log-level INFO
+      - SCREEN_WIDTH=1920
+      - SCREEN_HEIGHT=1080
+    volumes:
+      - /dev/shm:/dev/shm  # 共享内存，避免 Chrome 崩溃
+    networks:
+      - discourse-network
+    profiles:
+      - test
+
+volumes:
+  discourse-node_modules:
+    driver: local
+  discourse-bundle:
+    driver: local
+  discourse-tmp:
+    driver: local
