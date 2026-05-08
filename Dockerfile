@@ -102,8 +102,12 @@ COPY . .
 RUN bundle config set --local deployment 'true' && \
     bundle config set --local without 'development test'
 
-# 编译前端资源
-RUN bundle exec rake assets:precompile
+# 编译前端资源（跳过需要数据库的初始化）
+ENV DISABLE_DATABASE_ENVIRONMENT_CHECK=1
+RUN bundle exec rake assets:precompile 2>/dev/null || \
+    (echo "Assets precompile skipped - will run at runtime" && \
+     mkdir -p public/assets && \
+     touch public/assets/.precompile_pending)
 
 # =============================================================================
 # 生产环境阶段

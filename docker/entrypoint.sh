@@ -61,9 +61,15 @@ init_database() {
 # 编译前端资源
 precompile_assets() {
     if [ "$RAILS_ENV" = "production" ]; then
-        log_info "Precompiling assets..."
-        bundle exec rake assets:precompile
-        log_info "Asset precompilation complete!"
+        # 检查是否需要编译资源
+        if [ -f "public/assets/.precompile_pending" ] || [ ! -d "public/assets" ] || [ -z "$(ls -A public/assets 2>/dev/null)" ]; then
+            log_info "Precompiling assets..."
+            bundle exec rake assets:precompile
+            rm -f public/assets/.precompile_pending
+            log_info "Asset precompilation complete!"
+        else
+            log_info "Assets already precompiled, skipping..."
+        fi
     fi
 }
 
