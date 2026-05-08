@@ -63,7 +63,17 @@ FROM base AS dependencies
 # 复制依赖文件
 COPY Gemfile Gemfile.lock ./
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY frontend/package.json frontend/
+
+# 复制所有 frontend 子项目的 package.json
+COPY frontend/discourse/package.json frontend/discourse/
+COPY frontend/asset-processor/package.json frontend/asset-processor/
+COPY frontend/discourse-i18n/package.json frontend/discourse-i18n/
+COPY frontend/discourse-markdown-it/package.json frontend/discourse-markdown-it/
+COPY frontend/discourse-types/package.json frontend/discourse-types/
+COPY frontend/deprecation-silencer/package.json frontend/deprecation-silencer/
+COPY frontend/custom-proxy/package.json frontend/custom-proxy/
+COPY frontend/ember-cli-progress-ci/package.json frontend/ember-cli-progress-ci/
+COPY frontend/pretty-text/package.json frontend/pretty-text/
 
 # 安装 Ruby gems
 RUN bundle config set --local deployment 'true' \
