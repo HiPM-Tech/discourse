@@ -1,5 +1,8 @@
 # Discourse 生产环境 Docker Compose 配置
 # 使用方式: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# 注意：此配置假设你已经在外部运行 PostgreSQL 和 Redis
+# 配置外部数据库连接请在 .env 文件中设置
 
 version: "3.8"
 
@@ -37,6 +40,14 @@ services:
       # 生产环境强制使用安全密钥
       DISCOURSE_SECRET_KEY_BASE: ${DISCOURSE_SECRET_KEY_BASE:?错误: 生产环境必须设置 DISCOURSE_SECRET_KEY_BASE}
       DISCOURSE_DB_PASSWORD: ${DISCOURSE_DB_PASSWORD:?错误: 生产环境必须设置 DISCOURSE_DB_PASSWORD}
+      # 外部数据库配置
+      DISCOURSE_DB_HOST: ${DISCOURSE_DB_HOST:-postgres}
+      DISCOURSE_DB_PORT: ${DISCOURSE_DB_PORT:-5432}
+      DISCOURSE_DB_NAME: ${DISCOURSE_DB_NAME:-discourse}
+      DISCOURSE_DB_USERNAME: ${DISCOURSE_DB_USERNAME:-discourse}
+      DISCOURSE_REDIS_HOST: ${DISCOURSE_REDIS_HOST:-redis}
+      DISCOURSE_REDIS_PORT: ${DISCOURSE_REDIS_PORT:-6379}
+      DISCOURSE_REDIS_PASSWORD: ${DISCOURSE_REDIS_PASSWORD:-}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/healthcheck"]
       interval: 30s
@@ -51,59 +62,34 @@ services:
         reservations:
           cpus: '1.0'
           memory: 1G
+    networks:
+      - discourse-network
+    restart: unless-stopped
 
   sidekiq:
-    image: ${DISCOURSE_IMAGE:-discourse/discourse:latest}
+    image: ${DISCOURSE_IMAGE:-ghcr.io/hipm-tech/discourse:latest}
     build: null
     container_name: discourse-sidekiq
     environment:
       RAILS_ENV: production
       DISCOURSE_SECRET_KEY_BASE: ${DISCOURSE_SECRET_KEY_BASE}
       DISCOURSE_DB_PASSWORD: ${DISCOURSE_DB_PASSWORD}
+      # 外部数据库配置
+      DISCOURSE_DB_HOST: ${DISCOURSE_DB_HOST:-postgres}
+      DISCOURSE_DB_PORT: ${DISCOURSE_DB_PORT:-5432}
+      DISCOURSE_DB_NAME: ${DISCOURSE_DB_NAME:-discourse}
+      DISCOURSE_DB_USERNAME: ${DISCOURSE_DB_USERNAME:-discourse}
+      DISCOURSE_REDIS_HOST: ${DISCOURSE_REDIS_HOST:-redis}
+      DISCOURSE_REDIS_PORT: ${DISCOURSE_REDIS_PORT:-6379}
+      DISCOURSE_REDIS_PASSWORD: ${DISCOURSE_REDIS_PASSWORD:-}
     deploy:
       resources:
         limits:
           cpus: '1.0'
           memory: 1G
-
-  postgres:
-    container_name: discourse-postgres
-    # 生产环境使用更强大的 Postgres 配置
-    command: >
-      postgres
-      -c shared_buffers=512MB
-      -c max_connections=400
-      -c work_mem=20MB
-      -c maintenance_work_mem=128MB
-      -c effective_cache_size=1GB
-      -c checkpoint_completion_target=0.9
-      -c wal_buffers=16MB
-      -c default_statistics_target=100
-      -c random_page_cost=1.1
-      -c effective_io_concurrency=200
-      -c min_wal_size=1GB
-      -c max_wal_size=4GB
-    deploy:
-      resources:
-        limits:
-          cpus: '2.0'
-          memory: 2G
-
-  redis:
-    container_name: discourse-redis
-    command: >
-      redis-server
-      --appendonly yes
-      --maxmemory 512mb
-      --maxmemory-policy allkeys-lru
-      --save 900 1
-      --save 300 10
-      --save 60 10000
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 512M
+    networks:
+      - discourse-network
+    restart: unless-stopped
 
   # 可选: 自动备份服务
   backup:
@@ -124,11 +110,13 @@ services:
       RAILS_ENV: production
       DISCOURSE_SECRET_KEY_BASE: ${DISCOURSE_SECRET_KEY_BASE}
       DISCOURSE_DB_PASSWORD: ${DISCOURSE_DB_PASSWORD}
+      # 外部数据库配置
+      DISCOURSE_DB_HOST: ${DISCOURSE_DB_HOST:-postgres}
+      DISCOURSE_DB_PORT: ${DISCOURSE_DB_PORT:-5432}
+      DISCOURSE_DB_NAME: ${DISCOURSE_DB_NAME:-discourse}
+      DISCOURSE_DB_USERNAME: ${DISCOURSE_DB_USERNAME:-discourse}
     volumes:
       - discourse-backups:/var/www/discourse/public/backups
-    depends_on:
-      - postgres
-      - redis
     networks:
       - discourse-network
     restart: unless-stopped
