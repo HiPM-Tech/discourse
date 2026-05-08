@@ -62,8 +62,9 @@ FROM base AS ruby-dependencies
 
 COPY Gemfile Gemfile.lock ./
 
+# 安装所有 gems（包括 development 和 test）
+# Discourse 需要这些 gems 才能正常运行
 RUN bundle config set --local deployment 'true' \
-    && bundle config set --local without 'development test' \
     && bundle install --jobs $(nproc) --retry 3
 
 # =============================================================================
