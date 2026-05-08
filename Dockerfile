@@ -56,37 +56,41 @@ RUN curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - \
 WORKDIR ${DISCOURSE_HOME}
 
 # =============================================================================
-# 依赖阶段 - 安装 Gem 和 npm 包
+# Ruby 依赖阶段
 # =============================================================================
-FROM base AS dependencies
+FROM base AS ruby-dependencies
 
-# 复制依赖文件
 COPY Gemfile Gemfile.lock ./
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 
-# 复制所有 frontend 子项目的 package.json
-COPY frontend/discourse/package.json frontend/discourse/
-COPY frontend/asset-processor/package.json frontend/asset-processor/
-COPY frontend/discourse-i18n/package.json frontend/discourse-i18n/
-COPY frontend/discourse-markdown-it/package.json frontend/discourse-markdown-it/
-COPY frontend/discourse-types/package.json frontend/discourse-types/
-COPY frontend/deprecation-silencer/package.json frontend/deprecation-silencer/
-COPY frontend/custom-proxy/package.json frontend/custom-proxy/
-COPY frontend/ember-cli-progress-ci/package.json frontend/ember-cli-progress-ci/
-COPY frontend/pretty-text/package.json frontend/pretty-text/
-
-# 安装 Ruby gems
 RUN bundle config set --local deployment 'true' \
     && bundle config set --local without 'development test' \
     && bundle install --jobs $(nproc) --retry 3
 
+# =============================================================================
+# Node 依赖阶段
+# =============================================================================
+FROM base AS node-dependencies
+
+# 复制项目文件（pnpm workspace 需要完整项目结构）
+COPY . .
+
 # 安装 Node.js 包
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile || pnpm install
 
 # =============================================================================
 # 构建阶段 - 编译前端资源
 # =============================================================================
-FROM dependencies AS build
+FROM base AS build
+
+# 复制 Ruby 依赖
+COPY --from=ruby-dependencies ${BUNDLE_PATH} ${BUNDLE_PATH}
+COPY --from=ruby-dependencies ${DISCOURSE_HOME}/.bundle ${DISCOURSE_HOME}/.bundle
+
+# 复制 Node 依赖
+COPY --from=node-dependencies ${DISCOURSE_HOME}/node_modules ${DISCOURSE_HOME}/node_modules
+COPY --from=node-dependencies ${DISCOURSE_HOME}/frontend ${DISCOURSE_HOME}/frontend
+COPY --from=node-dependencies ${DISCOURSE_HOME}/plugins ${DISCOURSE_HOME}/plugins
+COPY --from=node-dependencies ${DISCOURSE_HOME}/themes ${DISCOURSE_HOME}/themes
 
 # 复制源代码
 COPY . .
@@ -112,12 +116,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # 创建 discourse 用户
 RUN groupadd -r discourse && useradd -r -g discourse -d ${DISCOURSE_HOME} discourse
 
-# 复制依赖
-COPY --from=dependencies ${BUNDLE_PATH} ${BUNDLE_PATH}
-COPY --from=dependencies ${DISCOURSE_HOME}/node_modules ${DISCOURSE_HOME}/node_modules
+# 复制 Ruby 依赖
+COPY --from=ruby-dependencies ${BUNDLE_PATH} ${BUNDLE_PATH}
+COPY --from=ruby-dependencies ${DISCOURSE_HOME}/.bundle ${DISCOURSE_HOME}/.bundle
+
+# 复制 Node 依赖
+COPY --from=node-dependencies ${DISCOURSE_HOME}/node_modules ${DISCOURSE_HOME}/node_modules
 
 # 复制源代码
 COPY --chown=discourse:discourse . .
+
+# 复制编译后的资源
 COPY --from=build --chown=discourse:discourse ${DISCOURSE_HOME}/public/assets ${DISCOURSE_HOME}/public/assets
 
 # 创建必要的目录
