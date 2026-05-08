@@ -251,12 +251,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # 其他测试工具
     && rm -rf /var/lib/apt/lists/*
 
-# 安装 Chrome
-RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
-    && echo "deb http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list \
-    && apt-get update \
-    && apt-get install -y google-chrome-stable \
-    && rm -rf /var/lib/apt/lists/*
+# 安装 Chrome 或 Chromium（根据架构）
+RUN if [ "$(uname -m)" = "x86_64" ]; then \
+        # AMD64: 安装 Google Chrome \
+        wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
+        && echo "deb http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list \
+        && apt-get update \
+        && apt-get install -y google-chrome-stable \
+        && rm -rf /var/lib/apt/lists/*; \
+    else \
+        # ARM64: 安装 Chromium \
+        apt-get update \
+        && apt-get install -y chromium \
+        && rm -rf /var/lib/apt/lists/*; \
+    fi
 
 # 创建 discourse 用户
 RUN groupadd -r discourse && useradd -r -g discourse -d ${DISCOURSE_HOME} discourse
@@ -266,7 +274,7 @@ ENV RAILS_ENV=test \
     BUNDLE_PATH=/var/www/discourse/vendor/bundle \
     BUNDLE_WITHOUT="" \
     CI=true \
-    CHROME_BIN=/usr/bin/google-chrome
+    CHROME_BIN=/usr/bin/chromium
 
 # 创建必要的目录
 RUN mkdir -p tmp/pids log public/uploads public/backups test-results coverage \
